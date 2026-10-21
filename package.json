@@ -20,8 +20,16 @@
     "license": "MIT",
     "author": "aimmetal-tech",
     "type": "module",
-    "main": "index.js",
+    "main": "dist/index.js",
+    "bin": {
+        "deepseek-search-mcp": "dist/index.js"
+    },
+    "files": [
+        "dist"
+    ],
     "scripts": {
+        "build": "tsc",
+        "prepare": "npm run build",
         "dev": "tsx --env-file-if-exists=.env src/index.ts",
         "lint": "oxlint src",
         "lint:fix": "oxlint --fix src",
