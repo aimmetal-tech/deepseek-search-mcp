@@ -1,0 +1,43 @@
+{
+    "name": "deepseek-search-mcp",
+    "version": "0.0.1",
+    "description": "An MCP server that exposes DeepSeek Search as a tool for agents.",
+    "keywords": [
+        "mcp",
+        "deepseek",
+        "search",
+        "tool",
+        "agent"
+    ],
+    "homepage": "https://github.com/aimmetal-tech/deepseek-search-mcp#readme",
+    "bugs": {
+        "url": "https://github.com/aimmetal-tech/deepseek-search-mcp/issues"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/aimmetal-tech/deepseek-search-mcp.git"
+    },
+    "license": "MIT",
+    "author": "aimmetal-tech",
+    "type": "module",
+    "main": "index.js",
+    "scripts": {
+        "dev": "tsx --env-file-if-exists=.env src/index.ts",
+        "lint": "oxlint src",
+        "lint:fix": "oxlint --fix src",
+        "format": "prettier --write .",
+        "format:check": "prettier --check .",
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "devDependencies": {
+        "@types/node": "^26.6.5",
+        "oxlint": "^1.89.0",
+        "prettier": "^3.9.10",
+        "tsx": "^4.23.15",
+        "typescript": "^7.0.2"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/server": "^2.3.1",
+        "zod": "^4.6.7"
+    }
+}
