@@ -16,7 +16,7 @@
 
 ## 安装
 
-需要 Node.js 18+ 和一个 [DeepSeek API Key](https://platform.deepseek.com/)。
+需要 Node.js 20+ 和一个 [DeepSeek API Key](https://platform.deepseek.com/)。
 
 在 MCP 客户端（如 VS Code、Claude Desktop 等）的配置文件中添加：
 
