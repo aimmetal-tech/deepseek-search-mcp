@@ -1,8 +1,12 @@
-import type { FetchSchema, SearchSchema } from "./types.js";
+import type z from "zod";
+import { FetchOutputSchema, SearchOutputSchema } from "./types.js";
 
 const BASE_URL = "https://api.deepseek.com";
 
-export async function searchDeepSeek(query: string): Promise<SearchSchema[]> {
+type SearchResult = z.infer<typeof SearchOutputSchema>;
+type FetchResult = z.infer<typeof FetchOutputSchema>;
+
+export async function searchDeepSeek(query: string): Promise<SearchResult> {
     const key = process.env.DS_API_KEY;
     if (!key) throw new Error("缺少环境变量 DS_API_KEY");
 
@@ -17,11 +21,11 @@ export async function searchDeepSeek(query: string): Promise<SearchSchema[]> {
 
     if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
 
-    const data = (await res.json()) as { results: SearchSchema[] };
-    return data.results;
+    const data = SearchOutputSchema.parse(await res.json());
+    return data;
 }
 
-export async function fetchDeepSeek(url: string): Promise<FetchSchema> {
+export async function fetchDeepSeek(url: string): Promise<FetchResult> {
     const key = process.env.DS_API_KEY;
     if (!key) throw new Error("缺少环境变量 DS_API_KEY");
 
@@ -36,6 +40,6 @@ export async function fetchDeepSeek(url: string): Promise<FetchSchema> {
 
     if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
 
-    const data = (await res.json()) as FetchSchema;
+    const data = FetchOutputSchema.parse(await res.json());
     return data;
 }
