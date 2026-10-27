@@ -3,7 +3,11 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { fetchDeepSeek, searchDeepSeek } from "./deepseek.js";
-import { FetchOutputSchema, SearchOutputSchema } from "./types.js";
+import {
+    CompactSearchOutputSchema,
+    FetchOutputSchema,
+    SearchInputSchema
+} from "./types.js";
 
 const server = new McpServer({ name: "deepseek-search", version: "0.0.1" });
 
@@ -13,11 +17,11 @@ server.registerTool(
     {
         title: "DeepSeek Web Search",
         description: "搜索网页",
-        inputSchema: z.object({ query: z.string() }),
-        outputSchema: SearchOutputSchema
+        inputSchema: SearchInputSchema,
+        outputSchema: CompactSearchOutputSchema
     },
-    async ({ query }) => {
-        const data = await searchDeepSeek(query);
+    async args => {
+        const data = await searchDeepSeek(args);
         return {
             content: [{ type: "text", text: JSON.stringify(data) }],
             structuredContent: data
