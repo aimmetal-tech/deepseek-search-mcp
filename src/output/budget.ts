@@ -28,6 +28,8 @@ export function fitText<T extends object>(
     build: (prefix: string) => T
 ): T {
     const chars = Array.from(prefixChars(text, budget));
+    const full = build(chars.join(""));
+    if (fitsJson(full, budget)) return full;
     let low = 0;
     let high = chars.length;
     if (!fitsJson(build(""), budget)) {
