@@ -35,7 +35,7 @@
         "lint:fix": "oxlint --fix src",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "test": "npm run build && node --test"
     },
     "devDependencies": {
         "@types/node": "^26.6.5",
