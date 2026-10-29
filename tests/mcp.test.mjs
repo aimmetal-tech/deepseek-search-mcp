@@ -194,6 +194,49 @@ test(
 );
 
 test(
+    "stdio also bounds SDK validation errors for multiple invalid search arguments",
+    { timeout: 15000 },
+    () =>
+        scenario(async connection => {
+            const result = await connection.request("tools/call", {
+                name: "search",
+                arguments: {
+                    query: "x".repeat(129),
+                    count: 100,
+                    ori_question: "y".repeat(129),
+                    localization: 4,
+                    need_content: "yes"
+                }
+            });
+            assert.equal(result.isError, true);
+            assert.ok(
+                charLength(result.content[0].text) <= 1024,
+                `SDK validation error length: ${charLength(result.content[0].text)}`
+            );
+        })
+);
+
+test(
+    "stdio keeps unknown tools as protocol errors without archiving data",
+    { timeout: 15000 },
+    () =>
+        scenario(async (connection, directory) => {
+            await assert.rejects(
+                () =>
+                    connection.request("tools/call", {
+                        name: "unknown",
+                        arguments: {}
+                    }),
+                error => JSON.parse(error.message).code === -32602
+            );
+            assert.deepEqual(
+                (await readdir(directory)).filter(x => x.startsWith("r_")),
+                []
+            );
+        })
+);
+
+test(
     "stdio bounds and redacts upstream errors and never archives them",
     { timeout: 15000 },
     () =>

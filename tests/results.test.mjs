@@ -60,6 +60,26 @@ test("short results keep their old shape without writing archives", () =>
         assert.deepEqual(await readdir(config.directory), []);
     }));
 
+test("exact output boundary stays unchanged; one extra character triggers archival", () =>
+    scenario(async (manager, config) => {
+        const base = { title: "t", content: "" };
+        const exact = {
+            ...base,
+            content: "x".repeat(config.maxOutputChars - jsonLength(base))
+        };
+        assert.equal(jsonLength(exact), config.maxOutputChars);
+        assert.deepEqual(await manager.fetch(exact), exact);
+        assert.deepEqual(await readdir(config.directory), []);
+        const longer = { ...exact, content: exact.content + "x" };
+        const preview = await manager.fetch(longer);
+        assert.equal(preview._result.truncated, true);
+        assert.ok(jsonLength(preview) <= config.maxOutputChars);
+        assert.equal(
+            await readAll(manager, preview._result.result_id),
+            JSON.stringify(longer)
+        );
+    }));
+
 test("fetch preview keeps a continuous prefix and preserves exact full snapshot", () =>
     scenario(async (manager, config) => {
         const data = { title: "标题", content: '正文😀\n"\\'.repeat(1000) };

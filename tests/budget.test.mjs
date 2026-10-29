@@ -61,6 +61,7 @@ test("invalid, relative and unsafe configuration fails before serving", () => {
         { DS_MAX_OUTPUT_CHARS: "1000" },
         { DS_MAX_OUTPUT_CHARS: "1e4" },
         { DS_RESULT_TTL_DAYS: "0" },
+        { DS_RESULT_TTL_DAYS: "10000000" },
         { DS_RESULT_MAX_BYTES: "Infinity" },
         { DS_RESULT_MAX_BYTES: "9007199254740992" },
         { DS_READ_DEFAULT_CHARS: "12001" },

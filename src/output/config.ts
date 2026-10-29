@@ -53,7 +53,7 @@ export function readOutputConfig(
                 "DS_RESULT_TTL_DAYS",
                 7,
                 1,
-                Math.floor(Number.MAX_SAFE_INTEGER / dayMs)
+                Math.floor((Date.UTC(9999, 11, 31) - Date.now()) / dayMs)
             ) * dayMs,
         maxBytes: integer(env, "DS_RESULT_MAX_BYTES", 512 * 1024 * 1024)
     };

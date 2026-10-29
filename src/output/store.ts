@@ -52,7 +52,7 @@ async function exists(path: string): Promise<boolean> {
 }
 
 async function regularFile(path: string): Promise<FileHandle> {
-    const before = await lstat(path);
+    const before = await lstat(path, { bigint: true });
     if (!before.isFile() || before.isSymbolicLink()) {
         throw new ResultError("RESULT_CORRUPT", "结果文件类型无效");
     }
@@ -61,7 +61,7 @@ async function regularFile(path: string): Promise<FileHandle> {
         constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
     );
     try {
-        const after = await handle.stat();
+        const after = await handle.stat({ bigint: true });
         if (
             !after.isFile() ||
             after.ino !== before.ino ||
@@ -82,11 +82,21 @@ async function smallJson(path: string): Promise<unknown> {
         if ((await handle.stat()).size > 8192)
             throw new Error("metadata too large");
         const buffer = Buffer.alloc(8193);
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-        if (bytesRead > 8192) throw new Error("metadata too large");
+        let length = 0;
+        while (length < buffer.length) {
+            const { bytesRead } = await handle.read(
+                buffer,
+                length,
+                buffer.length - length,
+                length
+            );
+            if (bytesRead === 0) break;
+            length += bytesRead;
+        }
+        if (length > 8192) throw new Error("metadata too large");
         return JSON.parse(
             new TextDecoder("utf-8", { fatal: true }).decode(
-                buffer.subarray(0, bytesRead)
+                buffer.subarray(0, length)
             )
         );
     } finally {
@@ -174,18 +184,42 @@ export class ResultStore {
         const lock = join(root, ".archive.lock");
         const recovery = join(root, ".archive.recovery");
         const owner = join(root, `.owner-${process.pid}-${randomUUID()}`);
-        const token = randomUUID();
-        const record = JSON.stringify({ pid: process.pid, token });
-        const candidate = await open(owner, "wx", 0o600);
+        const record = JSON.stringify({ pid: process.pid });
         try {
-            await candidate.writeFile(record);
-        } finally {
-            await candidate.close();
+            const candidate = await open(owner, "wx", 0o600);
+            try {
+                await candidate.writeFile(record);
+            } finally {
+                await candidate.close();
+            }
+        } catch (error) {
+            await rm(owner, { force: true });
+            throw error;
         }
-        let acquired = false;
+        const identity = await lstat(owner, { bigint: true });
+        const ownsLock = async () => {
+            try {
+                const stat = await lstat(lock, { bigint: true });
+                return (
+                    stat.isFile() &&
+                    !stat.isSymbolicLink() &&
+                    stat.ino === identity.ino &&
+                    stat.dev === identity.dev
+                );
+            } catch (error) {
+                if (
+                    hasCode(error, "ENOENT") ||
+                    hasCode(error, "EPERM") ||
+                    hasCode(error, "EACCES")
+                )
+                    return false;
+                throw error;
+            }
+        };
         const deadline = Date.now() + 5000;
+        let admitted = false;
         try {
-            while (!acquired) {
+            for (;;) {
                 if (Date.now() >= deadline) {
                     throw new ResultError(
                         "STORE_BUSY",
@@ -196,11 +230,32 @@ export class ResultStore {
                     await delay(25);
                     continue;
                 }
+                if (await ownsLock()) {
+                    admitted = true;
+                    break;
+                }
                 try {
                     await link(owner, lock);
-                    acquired = true;
+                    while (await exists(recovery)) {
+                        if (Date.now() >= deadline)
+                            throw new ResultError(
+                                "STORE_BUSY",
+                                "归档恢复仍在进行，请稍后重试"
+                            );
+                        await delay(25);
+                    }
+                    if (await ownsLock()) {
+                        admitted = true;
+                        break;
+                    }
+                    await delay(25);
                 } catch (error) {
-                    if (!hasCode(error, "EEXIST")) throw error;
+                    if (
+                        !hasCode(error, "EEXIST") &&
+                        !hasCode(error, "EPERM") &&
+                        !hasCode(error, "EACCES")
+                    )
+                        throw error;
                     let recovering = false;
                     try {
                         await mkdir(recovery, { mode: 0o700 });
@@ -224,7 +279,13 @@ export class ResultStore {
                     } catch (failure) {
                         if (
                             !hasCode(failure, "EEXIST") &&
-                            !hasCode(failure, "ENOENT")
+                            !hasCode(failure, "ENOENT") &&
+                            !hasCode(failure, "EPERM") &&
+                            !hasCode(failure, "EACCES") &&
+                            !(
+                                failure instanceof ResultError &&
+                                failure.code === "RESULT_CORRUPT"
+                            )
                         )
                             throw failure;
                     } finally {
@@ -236,7 +297,11 @@ export class ResultStore {
             return await run(root);
         } finally {
             try {
-                if (acquired) await rm(lock);
+                if (
+                    (admitted || !(await exists(recovery))) &&
+                    (await ownsLock())
+                )
+                    await rm(lock);
             } finally {
                 await rm(owner, { force: true });
             }
@@ -266,7 +331,12 @@ export class ResultStore {
             try {
                 const meta = await this.metadata(root, entry.name);
                 if (Date.parse(meta.expires_at) <= this.now()) {
-                    await rm(path, { recursive: true });
+                    const deleting = join(
+                        root,
+                        `.tmp-${process.pid}-${randomUUID()}`
+                    );
+                    await rename(path, deleting);
+                    await rm(deleting, { recursive: true });
                     continue;
                 }
             } catch (error) {
