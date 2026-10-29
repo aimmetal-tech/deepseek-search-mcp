@@ -16,9 +16,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { OutputConfig } from "./config.js";
 import { charLength, fitText } from "./budget.js";
-
-export const RESULT_ID_PATTERN =
-    /^r_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+import { RESULT_ID_PATTERN } from "./ids.js";
+import { ResultReferenceSchema } from "../types.js";
+import type { ResultReference, ReadPage } from "../types.js";
+export type { ResultReference, ReadPage } from "../types.js";
 
 export class ResultError extends Error {
     constructor(
@@ -29,32 +30,10 @@ export class ResultError extends Error {
     }
 }
 
-export interface ResultReference {
-    truncated: true;
-    result_id: string;
-    total_chars: number;
-    created_at: string;
-    expires_at: string;
-}
-
-export interface ReadPage {
-    result_id: string;
-    text: string;
-    offset: number;
-    returned_chars: number;
-    total_chars: number;
-    next_offset: number | null;
-    eof: boolean;
-}
-
-const MetadataSchema = z.object({
+const MetadataSchema = ResultReferenceSchema.omit({ truncated: true }).extend({
     version: z.literal(1),
     tool: z.enum(["search", "fetch"]),
-    result_id: z.string().regex(RESULT_ID_PATTERN),
-    total_chars: z.number().int().nonnegative().safe(),
-    total_bytes: z.number().int().nonnegative().safe(),
-    created_at: z.iso.datetime(),
-    expires_at: z.iso.datetime()
+    total_bytes: z.number().int().nonnegative().safe()
 });
 type Metadata = z.infer<typeof MetadataSchema>;
 

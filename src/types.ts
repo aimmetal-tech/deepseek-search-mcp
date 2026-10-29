@@ -1,4 +1,5 @@
 import z from "zod";
+import { RESULT_ID_PATTERN } from "./output/ids.js";
 
 export const SearchInputSchema = z.object({
     query: z.string().min(1).max(128).meta({
@@ -50,3 +51,56 @@ export const FetchOutputSchema = z.object({
     title: z.string(),
     content: z.string()
 });
+
+export const ResultIdSchema = z.string().max(38).regex(RESULT_ID_PATTERN);
+
+export const ResultReferenceSchema = z.object({
+    truncated: z.literal(true),
+    result_id: ResultIdSchema,
+    total_chars: z.number().int().nonnegative().safe(),
+    created_at: z.iso.datetime(),
+    expires_at: z.iso.datetime()
+});
+export type ResultReference = z.infer<typeof ResultReferenceSchema>;
+
+export const SearchToolOutputSchema = CompactSearchOutputSchema.extend({
+    _result: ResultReferenceSchema.extend({
+        total_results: z.number().int().nonnegative(),
+        shown_results: z.number().int().nonnegative()
+    }).optional()
+});
+
+export const FetchToolOutputSchema = FetchOutputSchema.extend({
+    _result: ResultReferenceSchema.optional()
+});
+
+export function createReadInputSchema(defaultLimit: number, maxLimit: number) {
+    return z.object({
+        result_id: ResultIdSchema,
+        offset: z.number().int().nonnegative().safe().default(0).meta({
+            description:
+                "保存的 JSON 文本中的 Unicode 码点位置，从 0 开始；不是字节或网页正文位置。"
+        }),
+        limit: z
+            .number()
+            .int()
+            .positive()
+            .max(maxLimit)
+            .default(defaultLimit)
+            .meta({
+                description:
+                    "期望读取的码点数；外壳与 JSON 转义占用预算时，实际片段可能更短。下一页必须使用 next_offset。"
+            })
+    });
+}
+
+export const ReadPageSchema = z.object({
+    result_id: ResultIdSchema,
+    text: z.string(),
+    offset: z.number().int().nonnegative().safe(),
+    returned_chars: z.number().int().nonnegative().safe(),
+    total_chars: z.number().int().nonnegative().safe(),
+    next_offset: z.number().int().nonnegative().safe().nullable(),
+    eof: z.boolean()
+});
+export type ReadPage = z.infer<typeof ReadPageSchema>;
