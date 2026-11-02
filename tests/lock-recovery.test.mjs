@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import fs from "node:fs/promises";
 import { rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
@@ -38,6 +39,236 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 function restore(original) {
     Object.assign(fs, original);
     syncBuiltinESMExports();
+}
+
+async function eventually(check) {
+    const deadline = performance.now() + 3000;
+    while (!(await check())) {
+        assert.ok(
+            performance.now() < deadline,
+            "deferred release did not finish"
+        );
+        await sleep(10);
+    }
+}
+
+async function owners(root) {
+    return (await fs.readdir(root)).filter(name => name.startsWith(".owner-"));
+}
+
+async function withTimedOutPublisher(run) {
+    const root = await fs.mkdtemp(join(tmpdir(), "ds-timeout-release-"));
+    const config = { ...readOutputConfig({}), directory: root };
+    const lock = join(root, ".archive.lock");
+    const recovery = join(root, ".archive.recovery");
+    const original = { link: fs.link, lstat: fs.lstat, rm: fs.rm };
+    const originalNow = Date.now;
+    const store = new ResultStore(config);
+    let clock = originalNow();
+    let published = false;
+    const jobs = [];
+    try {
+        fs.link = async (...args) => {
+            await original.link(...args);
+            if (args[1] === lock && !published) {
+                published = true;
+                await fs.mkdir(recovery);
+                clock += 6000;
+            }
+        };
+        Date.now = () => clock;
+        syncBuiltinESMExports();
+        await assert.rejects(
+            () => store.save("fetch", { content: "timed out" }),
+            { code: "STORE_BUSY" }
+        );
+        assert.ok(published);
+        Date.now = originalNow;
+        restore(original);
+        const track = job => {
+            jobs.push(job);
+            return job;
+        };
+        await run({ root, config, lock, recovery, original, store, track });
+    } finally {
+        restore(original);
+        await fs.rm(recovery, { recursive: true, force: true });
+        Date.now = () => originalNow() + 60000;
+        await Promise.allSettled(jobs);
+        Date.now = originalNow;
+        store.close();
+        await fs.rm(lock, { force: true });
+        await eventually(async () => (await owners(root)).length === 0);
+        await fs.rm(root, { recursive: true, force: true });
+    }
+}
+
+test(
+    "timed-out publisher does not poison later saves or cleanup after recovery finishes",
+    { timeout: 15000 },
+    () =>
+        withTimedOutPublisher(
+            async ({ root, lock, recovery, store, track }) => {
+                assert.equal((await owners(root)).length, 1);
+                assert.equal(
+                    JSON.parse(await fs.readFile(lock, "utf8")).pid,
+                    process.pid
+                );
+                await fs.rm(recovery, { recursive: true });
+                await wait(track(store.cleanup()));
+                const ref = await store.save("fetch", {
+                    content: "after recovery"
+                });
+                assert.equal(
+                    (await store.read(ref.result_id)).text,
+                    '{"content":"after recovery"}'
+                );
+                await store.cleanup();
+                await eventually(async () => (await owners(root)).length === 0);
+                assert.ok(!(await fs.readdir(root)).includes(".archive.lock"));
+            }
+        )
+);
+
+test("delayed release survives close without deleting a successor's lock", () =>
+    withTimedOutPublisher(async ({ root, lock, recovery, store }) => {
+        const successor = JSON.stringify({
+            pid: process.pid,
+            token: "successor"
+        });
+        await fs.rm(lock);
+        await fs.writeFile(lock, successor);
+        store.close();
+        await fs.rm(recovery, { recursive: true });
+        await eventually(async () => (await owners(root)).length === 0);
+        assert.equal(await fs.readFile(lock, "utf8"), successor);
+    }));
+
+test("an unpublished candidate is removed even while recovery remains active", async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), "ds-unpublished-timeout-"));
+    const recovery = join(root, ".archive.recovery");
+    const original = { lstat: fs.lstat };
+    const originalNow = Date.now;
+    const store = new ResultStore({ ...readOutputConfig({}), directory: root });
+    let clock = originalNow();
+    try {
+        await fs.mkdir(recovery);
+        fs.lstat = async (path, ...args) => {
+            const stat = await original.lstat(path, ...args);
+            if (path === recovery) clock += 6000;
+            return stat;
+        };
+        Date.now = () => clock;
+        syncBuiltinESMExports();
+        await assert.rejects(
+            () => store.save("fetch", { content: "not published" }),
+            { code: "STORE_BUSY" }
+        );
+        assert.deepEqual(await owners(root), []);
+        assert.deepEqual(await fs.readdir(root), [".archive.recovery"]);
+    } finally {
+        restore(original);
+        Date.now = originalNow;
+        store.close();
+        await fs.rm(recovery, { recursive: true, force: true });
+        await eventually(async () => (await owners(root)).length === 0);
+        await fs.rm(root, { recursive: true, force: true });
+    }
+});
+
+test("an outstanding deferred release does not keep the process alive", () => {
+    const source = `
+        import fs from 'node:fs/promises';
+        import {syncBuiltinESMExports} from 'node:module';
+        import {join} from 'node:path';
+        import {ResultStore} from ${JSON.stringify(new URL("../dist/output/store.js", import.meta.url).href)};
+        import {readOutputConfig} from ${JSON.stringify(new URL("../dist/output/config.js", import.meta.url).href)};
+        const root = process.argv[1];
+        const store = new ResultStore(readOutputConfig({DS_RESULT_DIR: root}));
+        const originalLink = fs.link;
+        let clock = Date.now();
+        fs.link = async (...args) => {
+            await originalLink(...args);
+            await fs.mkdir(join(root, '.archive.recovery'));
+            clock += 6000;
+        };
+        Date.now = () => clock;
+        syncBuiltinESMExports();
+        try { await store.save('fetch', {content: 'timeout'}); throw new Error('missing timeout'); }
+        catch (error) { if (error.code !== 'STORE_BUSY') throw error; }
+        store.close();
+        console.log('timeout delivered');
+    `;
+    return fs.mkdtemp(join(tmpdir(), "ds-unref-release-")).then(async root => {
+        try {
+            const result = spawnSync(
+                process.execPath,
+                ["--input-type=module", "-e", source, root],
+                { encoding: "utf8", timeout: 3000 }
+            );
+            assert.equal(
+                result.error,
+                undefined,
+                "deferred cleanup kept the process alive"
+            );
+            assert.equal(result.status, 0, result.stderr);
+            assert.match(result.stdout, /timeout delivered/);
+        } finally {
+            await fs.rm(root, {
+                recursive: true,
+                force: true,
+                maxRetries: 3,
+                retryDelay: 25
+            });
+        }
+    });
+});
+
+for (const point of ["identity stat", "lock deletion", "owner deletion"]) {
+    test(`delayed release preserves state through a transient ${point} failure`, () =>
+        withTimedOutPublisher(
+            async ({ root, lock, recovery, original, store, track }) => {
+                const owner = join(root, (await owners(root))[0]);
+                const rejected = gate();
+                let denied = true;
+                const fail = () => {
+                    rejected.release();
+                    throw Object.assign(
+                        new Error("transient deferred-release failure"),
+                        { code: "EACCES" }
+                    );
+                };
+                fs.lstat = async (path, ...args) => {
+                    if (denied && point === "identity stat" && path === lock)
+                        fail();
+                    return original.lstat(path, ...args);
+                };
+                fs.rm = async (path, ...args) => {
+                    if (
+                        denied &&
+                        ((point === "lock deletion" && path === lock) ||
+                            (point === "owner deletion" && path === owner))
+                    )
+                        fail();
+                    return original.rm(path, ...args);
+                };
+                syncBuiltinESMExports();
+                await fs.rm(recovery, { recursive: true });
+                await wait(rejected.promise);
+                assert.ok((await owners(root)).includes(basename(owner)));
+                denied = false;
+                restore(original);
+                await wait(track(store.cleanup()));
+                const ref = await store.save("fetch", {
+                    content: "retried release"
+                });
+                assert.equal(
+                    (await store.read(ref.result_id)).text,
+                    '{"content":"retried release"}'
+                );
+                await eventually(async () => (await owners(root)).length === 0);
+            }
+        ));
 }
 
 test(

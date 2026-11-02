@@ -113,6 +113,27 @@ function alive(pid: number): boolean {
     }
 }
 
+function retryRelease(release: () => Promise<boolean>): void {
+    const timer = setTimeout(() => {
+        void release().then(
+            released => {
+                if (!released) retryRelease(release);
+            },
+            () => retryRelease(release)
+        );
+    }, 25);
+    timer.unref();
+}
+
+async function releaseOrRetry(release: () => Promise<boolean>): Promise<void> {
+    try {
+        if (!(await release())) retryRelease(release);
+    } catch (error) {
+        retryRelease(release);
+        throw error;
+    }
+}
+
 export class ResultStore {
     private root: Promise<string> | undefined;
     private timer: ReturnType<typeof setInterval> | undefined;
@@ -197,7 +218,7 @@ export class ResultStore {
             throw error;
         }
         const identity = await lstat(owner, { bigint: true });
-        const ownsLock = async () => {
+        const ownsLock = async (strict = false) => {
             try {
                 const stat = await lstat(lock, { bigint: true });
                 return (
@@ -207,16 +228,17 @@ export class ResultStore {
                     stat.dev === identity.dev
                 );
             } catch (error) {
+                if (hasCode(error, "ENOENT")) return false;
                 if (
-                    hasCode(error, "ENOENT") ||
-                    hasCode(error, "EPERM") ||
-                    hasCode(error, "EACCES")
+                    !strict &&
+                    (hasCode(error, "EPERM") || hasCode(error, "EACCES"))
                 )
                     return false;
                 throw error;
             }
         };
         const deadline = Date.now() + 5000;
+        let published = false;
         let admitted = false;
         try {
             for (;;) {
@@ -231,11 +253,13 @@ export class ResultStore {
                     continue;
                 }
                 if (await ownsLock()) {
+                    published = true;
                     admitted = true;
                     break;
                 }
                 try {
                     await link(owner, lock);
+                    published = true;
                     while (await exists(recovery)) {
                         if (Date.now() >= deadline)
                             throw new ResultError(
@@ -296,15 +320,15 @@ export class ResultStore {
             }
             return await run(root);
         } finally {
-            try {
-                if (
-                    (admitted || !(await exists(recovery))) &&
-                    (await ownsLock())
-                )
-                    await rm(lock);
-            } finally {
+            const release = async () => {
+                if (published) {
+                    if (!admitted && (await exists(recovery))) return false;
+                    if (await ownsLock(true)) await rm(lock);
+                }
                 await rm(owner, { force: true });
-            }
+                return true;
+            };
+            await releaseOrRetry(release);
         }
     }
 
