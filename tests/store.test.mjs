@@ -71,7 +71,6 @@ async function resultDirectories(directory) {
 }
 
 function timestamp(value) {
-    // The public contract does not choose ISO strings versus epoch milliseconds.
     const time = typeof value === "number" ? value : Date.parse(value);
     assert.ok(Number.isFinite(time), "reference timestamps must be valid");
     return time;
