@@ -35,7 +35,7 @@ export async function searchDeepSeek(
 
     const rawData = await res.json();
     const data = SearchOutputSchema.parse(pruneEmptyFields(rawData));
-    const compactData = CompactSearchOutputSchema.parse(data)
+    const compactData = CompactSearchOutputSchema.parse(data);
     return compactData;
 }
 
